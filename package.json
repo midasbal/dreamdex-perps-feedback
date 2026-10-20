@@ -10,7 +10,8 @@
   "scripts": {
     "repro:01": "node feedback-repro-01.mjs",
     "repro:02": "node feedback-repro-02.mjs",
-    "repro:03": "node feedback-repro-03.mjs"
+    "repro:03": "node feedback-repro-03.mjs",
+    "repro:04": "node feedback-repro-04.mjs"
   },
   "dependencies": {
     "viem": "2.57.7"

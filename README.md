@@ -9,11 +9,12 @@ Keyless, reproducible feedback-track findings for dreamDEX perps on the Hideki (
 | [01](feedback/01-stale-order-id-misleading-owner.md) | normal | contracts | Stale order id: `cancelOrder` / `reduceOrder` / `reduceOrders` revert with `IncorrectSender` naming an unrelated address |
 | [02](feedback/02-undocumented-operator-functions.md) | normal | docs | Undocumented owner-parameterised operator functions on the perp pool (absent from the SDK, the bot-kit and their docs) |
 | [03](feedback/03-single-eoa-controls-authorization-and-upgrades.md) | major | contracts | A single EOA controls authorization and upgrades (a mainnet-readiness note; normal on testnet) |
+| [04](feedback/04-lastupdated-timestamp-dead-field.md) | normal | docs | `getPosition().lastUpdatedTimestampNs` is documented as a timestamp but is always 0 (low impact; a silent wrong value, not exploitable) |
 
 ## Repo layout
 
 - `feedback/` - one markdown report per issue, in the `feedback/TEMPLATE.md` format.
-- `feedback-repro-01.mjs`, `feedback-repro-02.mjs`, `feedback-repro-03.mjs` - the standalone reproduction for each report.
+- `feedback-repro-01.mjs` to `feedback-repro-04.mjs` - the standalone reproduction for each report.
 - `feedback/evidence/` - captured output of each repro, recorded at a pinned block (`repro-0X-run.txt`).
 - `package.json` - pins viem, the only dependency.
 
@@ -22,6 +23,7 @@ Keyless, reproducible feedback-track findings for dreamDEX perps on the Hideki (
 - Node 18 or newer.
 - Network access to the Tokyo RPC (`https://api.hideki2.infra.testnet.somnia.network`).
 - For repro-02 only: access to npm and GitHub, to fetch two public tarballs that are scanned in memory. Its section 3 also needs an RPC that supports `debug_traceCall` and `eth_call` state overrides (the Tokyo RPC does); on an RPC without them that section is skipped and says so.
+- For repro-04 only: access to the indexer (`https://hideki-dev.smk.somnia.host/v1/graphql`, for the oldest-positions sample) and to npm (one public tarball scanned in memory). Its storage view needs `debug_traceCall` and is skipped with a note otherwise.
 
 ## How to run
 
@@ -30,16 +32,18 @@ npm install
 node feedback-repro-01.mjs      # or: npm run repro:01
 node feedback-repro-02.mjs      # or: npm run repro:02
 node feedback-repro-03.mjs      # or: npm run repro:03
+node feedback-repro-04.mjs      # or: npm run repro:04
 ```
 
 The repros are keyless and read-only: they use reads and `eth_call` simulations only. No private key, signer or transaction is involved.
 
-A plain run uses the latest block, so some values change over time (for example the addresses named in report 01). To reproduce the exact recorded run, pin the block:
+A plain run of repro-01 to repro-03 uses the latest block, so some values change over time (for example the addresses named in report 01). Repro-04 instead runs at its recorded block by default (`PIN_BLOCK=latest` uses the head). To reproduce the exact recorded runs, pin the block:
 
 ```
 PIN_BLOCK=28564579 node feedback-repro-01.mjs
 PIN_BLOCK=28571134 node feedback-repro-02.mjs
 PIN_BLOCK=28575703 node feedback-repro-03.mjs
+PIN_BLOCK=28619406 node feedback-repro-04.mjs
 ```
 
 A pinned run needs an RPC that still serves state at that block (the Tokyo RPC did when these were recorded). Apart from a "(set via PIN_BLOCK)" tag on the block line, it matches the file in `feedback/evidence/`.

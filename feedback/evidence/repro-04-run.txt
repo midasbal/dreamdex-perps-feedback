@@ -1,0 +1,82 @@
+feedback-repro-04: MarginBank.getPosition().lastUpdatedTimestampNs is always 0
+================================================================================================
+Pinned block: 28619406 (the recorded block; default)   chain time 2026-10-20T16:30:38.000Z   chain 50383
+Every chain read below is pinned to that block. No key, no signature, no transaction.
+
+1. Our Safe's position (an account that is known to have been updated, and to have lived through a funding settlement)
+   getPosition(Safe, pool) = size 4000000000000000 | avgEntryPrice 2434220000000000000000 | entryFundingIndex 18712653618235490632141379575151312500
+   >>> lastUpdatedTimestampNs = 0
+   the position was opened in tx 0x0d6392c3636aede9f7e36ea64bb42986f53bb8c6968d015b952f24dceea4b47c at block 28608011 (2026-10-20T16:11:38.000Z);
+   the pool's last funding settlement at this block was 2026-10-20T16:19:18.000Z, which is AFTER the open. The field is 0 either way.
+   raw return: 4 words (128 bytes). If the 4-field ABI were wrong, extra or shifted words would appear:
+      word 0: 0x000000000000000000000000000000000000000000000000000e35fa931a0000  size (int128)
+      word 1: 0x000000000000000000000000000000000000000000000083f596b0f31f5e0000  avgEntryPrice (uint128)
+      word 2: 0x000000000000000000000000000000000e13ed0df538a9aeba44e2daf383be74  entryFundingIndex (int256)
+      word 3: 0x0000000000000000000000000000000000000000000000000000000000000000  lastUpdatedTimestampNs (uint64)
+
+2. Other live positions in the same pool, freshest and oldest, each confirmed live on chain at the pinned block
+
+   FRESHEST live positions (10); "last update" from the latest PositionUpdated event on chain
+   account          on-chain size              lastUpdatedTimestampNs  last update (UTC)          block      age
+   0xD3Ecd9...E619  -385400000000000000        0                       2026-10-20T16:30:33.000Z   28619353   0m 5s
+   0x47537E...8bfF  -68658000000000000000      0                       2026-10-20T16:30:33.000Z   28619353   0m 5s
+   0x85C695...a831  -7071800000000000000       0                       2026-10-20T16:30:14.000Z   28619160   0m 24s
+   0x420691...Dfd1  -76167900000000000000      0                       2026-10-20T16:29:11.000Z   28618531   1m 27s
+   0x6C2986...1ce4  -72177900000000000000      0                       2026-10-20T16:27:56.000Z   28617788   2m 42s
+   0x5734aD...51E4  20500000000000000          0                       2026-10-20T16:27:34.000Z   28617562   3m 4s
+   0x47aD91...db85  -15534800000000000000      0                       2026-10-20T16:25:57.000Z   28616594   4m 41s
+   0xCF53aF...bf67  -3223700000000000000       0                       2026-10-20T16:24:26.000Z   28615692   6m 12s
+   0x05917b...097C  2417700000000000000        0                       2026-10-20T16:23:14.000Z   28614966   7m 24s
+   0xFaf9a3...1aCE  -20500000000000000         0                       2026-10-20T16:23:00.000Z   28614831   7m 38s
+
+   OLDEST live positions (10); "last update" from the indexer's updatedAt / updatedAtBlock
+   account          on-chain size              lastUpdatedTimestampNs  last update (UTC)          block      age
+   0x858c86...2a3f  -95700000000000000         0                       2026-09-29T10:28:04.000Z   10284139   21d 6h
+   0xa92fdd...4ead  -70000000000000000         0                       2026-09-29T10:41:13.000Z   10292021   21d 5h
+   0xdf271a...f0cc  62900000000000000          0                       2026-10-02T00:37:23.000Z   12520677   18d 15h
+   0x4c4156...8dcc  -6000000000000000          0                       2026-10-06T07:36:27.000Z   16226337   14d 8h
+   0x8adafe...8b34  -12000000000000000         0                       2026-10-06T08:47:18.000Z   16268823   14d 7h
+   0x2b2a97...04ee  6000000000000000           0                       2026-10-06T08:47:24.000Z   16268885   14d 7h
+   0x5116b3...102e  -6000000000000000          0                       2026-10-06T08:47:57.000Z   16269211   14d 7h
+   0x38f4d1...9f0d  6000000000000000           0                       2026-10-06T08:47:57.000Z   16269207   14d 7h
+   0x9720ce...0a65  6000000000000000           0                       2026-10-06T08:48:02.000Z   16269258   14d 7h
+   0x2e3c8a...f81a  -6000000000000000          0                       2026-10-06T08:48:26.000Z   16269500   14d 7h
+
+3. Tally
+   live positions examined (ours + 10 freshest + 10 oldest): 21 | lastUpdatedTimestampNs == 0: 21 | != 0: 0
+   age since last update spans 0m 5s to 21d 6h; oldest sampled updatedAtBlock 10284139 vs the pinned block 28619406
+
+4. Storage view: which bank storage slots does getPosition read, and what do they hold? (debug_traceCall, prestateTracer)
+   our Safe: 3 struct slot(s) read (proxy implementation slot excluded)
+      slot +0  0xb90981daea35...  = 0x0000000000000083f596b0f31f5e00000000000000000000000e35fa931a0000  (size | avgEntryPrice, packed)
+      slot +1  0xb90981daea35...  = 0x000000000000000000000000000000000e13ed0df538a9aeba44e2daf383be74  (entryFundingIndex)
+      slot +2  0xb90981daea35...  = 0x0000000000000000000000000000000000000000000000000000000000000000  (lastUpdatedTimestampNs)
+   oldest sampled position 0x858c86...2a3f: 3 struct slot(s) read (proxy implementation slot excluded)
+      slot +0  0x882f882dfc0b...  = 0x00000000000000931f112e16ac5f0000fffffffffffffffffeac015b66fec000  (size | avgEntryPrice, packed)
+      slot +1  0x882f882dfc0b...  = 0x0000000000000000000000000000000002fb0c5543f8d6b55b623a04bb110000  (entryFundingIndex)
+      slot +2  0x882f882dfc0b...  = 0x0000000000000000000000000000000000000000000000000000000000000000  (lastUpdatedTimestampNs)
+   freshest sampled position 0xD3Ecd9...E619 (updated 0m 5s before the block): 3 struct slot(s) read (proxy implementation slot excluded)
+      slot +0  0xa4ca7e6c90ff...  = 0x00000000000000841f42e745a800e6e6fffffffffffffffffaa6c8bdef908000  (size | avgEntryPrice, packed)
+      slot +1  0xa4ca7e6c90ff...  = 0x000000000000000000000000000000000e19c745f7339252ca0c33049440be74  (entryFundingIndex)
+      slot +2  0xa4ca7e6c90ff...  = 0x0000000000000000000000000000000000000000000000000000000000000000  (lastUpdatedTimestampNs)
+
+5. Is there any other position timestamp, in the shipped SDK? (in-memory scan of the public @somnia-chain/markets-sdk@0.32.1 tarball)
+   SDK documentation (package/src/perp/state.ts):
+      line 469:   /** Last position update (nanoseconds). */
+      line 470:   lastUpdatedTimestampNs: bigint;
+   position-related FUNCTIONS in the shipped ABI modules (1):
+      readsAbi.js: function getPosition(address account, address perpPool) view returns ((int128 size, uint128 avgEntryPrice, int256 entryFundingIndex, uint64 lastUpdatedTimestampNs))   <-- the only timestamp field
+   position-related EVENTS in the shipped ABI modules (5):
+      eventsAbi.js: event PositionUpdated(account, perpPool, newSize, avgEntryPrice, realizedPnl, entryFundingIndex)  (no timestamp field)
+      eventsAbi.js: event PositionTransferred(from, to, perpPool, size, collateralTransferred)  (no timestamp field)
+      eventsAbi.js: event PositionLiquidated(account, perpPool, sizeDelta, markPrice)  (no timestamp field)
+      eventsAbi.js: event PositionSkippedBelowMinQuantity(account, perpPool, size)  (no timestamp field)
+      eventsAbi.js: event PositionTakenOver(account, bidder, perpPool, size, takeoverPrice)  (no timestamp field)
+
+6. Verdict
+================================================================================================
+lastUpdatedTimestampNs is 0 on ALL 21 live positions examined at block 28619406 (ours, 10 freshest, 10 oldest), spanning 0m 5s to 21d 6h since their last update.
+The raw return has exactly 4 words matching the 4-field ABI, and the struct's third storage slot reads zero, so this is not a decoding artifact: no write to the field is observed on any sampled position (inferred: the contract has no code path that sets it).
+In the shipped SDK, getPosition is the only position getter, this is its only timestamp field, and no position event carries a timestamp.
+The SDK documents it as "Last position update (nanoseconds)", so a consumer relying on it silently receives 0. Not a security issue.
+Limits: one pool (ETH-PERP), one block, one chain; "age" for the oldest group is the indexer's last-update time, not necessarily the position's creation or the contract version that wrote it; other pools were not checked.
