@@ -1,0 +1,89 @@
+feedback-repro-02: undocumented owner-parameterised operator functions on the perp pool
+============================================================================================
+Pinned block: 28571134   chain 50383   pool 0xd6cb1dd58580b84d76068ac21594219ce03aeddf
+Everything below is a read or an eth_call at that block. No key, no signature, no transaction.
+
+1. Selectors, and whether each is present in the pool's implementation bytecode
+   pool is a proxy (321 bytes); implementation 0x772e9B720C8140FaAA4D561a15269ED60E01521D resolved via EIP-1967 beacon slot -> beacon 0xb787F7…f6b002.implementation(); implementation code 76972 bytes
+   function                 selector    in implementation  role
+   placeOrderFor            0x80054449  PRESENT            present-control (the 3 standard operator functions)
+   cancelOrderFor           0xe37b444b  PRESENT            present-control (the 3 standard operator functions)
+   reduceOrderFor           0x364c2587  PRESENT            present-control (the 3 standard operator functions)
+   cancelOrdersFor          0x5a3165a9  PRESENT            under test (undocumented)
+   reduceOrdersFor          0xeddb4f78  PRESENT            under test (undocumented)
+   amendOrderFor            0x208ca30a  PRESENT            under test (undocumented)
+   cancelAllOrdersFor       0x5e85b5ac  PRESENT            under test (undocumented)
+   bogusFunctionForControl  0x35bb8e04  absent             ABSENT-control (made-up name)
+
+2. Does the SDK or the bot-kit expose them?  (in-memory scan of two pinned public tarballs)
+   @somnia-chain/markets-sdk@0.32.1 (src, dist, docs, README)
+   scanned 632 files.   function               mentions  ABI entry "function NAME("
+                       placeOrderFor          34        none
+                       cancelOrderFor         10        none
+                       reduceOrderFor         7         none
+                       cancelOrdersFor        0         none   <- under test
+                       reduceOrdersFor        0         none   <- under test
+                       amendOrderFor          0         none   <- under test
+                       cancelAllOrdersFor     0         none   <- under test
+   dreamdex-bot-kit @ 2579866 (all files incl. docs/, skills/)
+   scanned 592 files.   function               mentions  ABI entry "function NAME("
+                       placeOrderFor          30        yes (dreamdex-bot-kit-25798660bbe4674a6f83a960b202852896e2fed4/packages/core/src/execute.ts)
+                       cancelOrderFor         20        yes (dreamdex-bot-kit-25798660bbe4674a6f83a960b202852896e2fed4/packages/core/src/execute.ts)
+                       reduceOrderFor         9         yes (dreamdex-bot-kit-25798660bbe4674a6f83a960b202852896e2fed4/packages/perp-core/src/operator.ts)
+                       cancelOrdersFor        0         none   <- under test
+                       reduceOrdersFor        0         none   <- under test
+                       amendOrderFor          0         none   <- under test
+                       cancelAllOrdersFor     0         none   <- under test
+   Reading: the SDK package contains no ABI entry (so it cannot encode a call) for ANY of the seven `...For` functions; its remaining mentions
+   of the three standard ones are not ABI entries. The bot-kit has ABI entries and wrappers for the three standard ones only. The four under
+   test have ZERO mentions of any kind in either package, including the SDK's shipped docs/ and README and the bot-kit's docs/ and skills/.
+   (Scope: these two packages only. The hosted developer docs site is not scanned here.)
+
+3. Which operator grant does each need?
+   *** EMULATION via eth_call state override, NOT a real partial grant. ***
+   The operator 0x47a34A…5D568D really holds all three standard grants from 0x9b29D1…c9e7B1. In each simulation the registry's
+   storage slots for some of those grants are zeroed (for that one call only; nothing is written) to emulate an operator that holds a subset.
+   located one registry storage slot per standard grant: place 0x3fdf6a2424…  cancel 0xb7c9297245…  reduce 0x48858bd1a7…
+       columns: placeFor=placeOrderFor  cancelFor=cancelOrderFor  reduceFor=reduceOrderFor  cancelMany=cancelOrdersFor  reduceMany=reduceOrdersFor  amendFor=amendOrderFor  cancelAll=cancelAllOrdersFor
+
+   (a) emulation check: pool.isOperatorAuthorized(SAFE, OPERATOR, selector) under each override
+       intended place+cancel+reduce  -> resolved place=true cancel=true reduce=true   ok
+       intended place                -> resolved place=true cancel=false reduce=false   ok
+       intended cancel               -> resolved place=false cancel=true reduce=false   ok
+       intended reduce               -> resolved place=false cancel=false reduce=true   ok
+       intended place+cancel         -> resolved place=true cancel=true reduce=false   ok
+       intended place+reduce         -> resolved place=true cancel=false reduce=true   ok
+       intended cancel+reduce        -> resolved place=false cancel=true reduce=true   ok
+       intended (none)               -> resolved place=false cancel=false reduce=false   ok
+
+   (b) gate result per function.  deny = OnlyApprovedContracts;  pass = got PAST the authorization gate (later outcome is irrelevant: the id does not exist);  BANK-ONLY = OnlyMarginBank
+       operator holds       placeFor    cancelFor   reduceFor   cancelMany  reduceMany  amendFor    cancelAll  
+       place+cancel+reduce  pass        pass        pass        pass        pass        pass        BANK-ONLY  
+       place                pass        deny        deny        deny        deny        deny        BANK-ONLY  
+       cancel               deny        pass        deny        pass        deny        deny        BANK-ONLY  
+       reduce               deny        deny        pass        deny        pass        deny        BANK-ONLY  
+       place+cancel         pass        pass        deny        pass        deny        pass        BANK-ONLY  
+       place+reduce         pass        deny        pass        deny        pass        deny        BANK-ONLY  
+       cancel+reduce        deny        pass        pass        pass        pass        deny        BANK-ONLY  
+       (none)               deny        deny        deny        deny        deny        deny        BANK-ONLY  
+
+   (c) SANITY CHECK: with zero grants, every operator-grantable function denies: 6/6 deny  ->  ok
+       cancelAllOrdersFor with zero grants: BANK-ONLY   (and with all three grants: BANK-ONLY)
+
+   (d) minimal grant set that passes the gate, derived from the matrix (vs. what the naming suggests)
+       placeOrderFor        needs: place          expected: place         match   (standard)
+       cancelOrderFor       needs: cancel         expected: cancel        match   (standard)
+       reduceOrderFor       needs: reduce         expected: reduce        match   (standard)
+       cancelOrdersFor      needs: cancel         expected: cancel        match   (undocumented)
+       reduceOrdersFor      needs: reduce         expected: reduce        match   (undocumented)
+       amendOrderFor        needs: place+cancel   expected: place+cancel  match   (undocumented)
+       cancelAllOrdersFor   needs: BANK-ONLY      expected: BANK-ONLY     match   (undocumented)
+
+4. Summary
+============================================================================================
+These four owner-parameterised functions exist on the ETH perp pool (selectors present in the implementation bytecode, section 1) and are
+properly gated: in the emulation, cancelOrdersFor needs only the cancel grant, reduceOrdersFor only the reduce grant, amendOrderFor needs
+place AND cancel, and cancelAllOrdersFor is not operator-grantable at all (margin-bank only). This is NOT a security issue: with
+zero grants every grantable function denies. But they are absent from @somnia-chain/markets-sdk@0.32.1 and from the bot-kit, and neither
+package's shipped documentation mentions them or the grant each requires, so an integrator following the documented surface cannot discover them.
+Suggested fix: document them (including the grant each needs, and that amendOrderFor needs two) or expose wrappers in the SDK.

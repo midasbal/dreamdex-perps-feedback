@@ -1,0 +1,8 @@
+.bot.key
+.env
+*.lock
+node_modules/
+*.log
+scratch/
+.env.*
+*.key

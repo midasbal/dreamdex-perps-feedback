@@ -1,0 +1,88 @@
+feedback-repro-03: who controls the authorization / upgrade path of the perp system?  (testnet observation)
+================================================================================================
+Pinned block: 28575703   chain 50383
+Reads and eth_call simulations only. No key, no signature, no transaction.
+
+1. Proxy structure (EIP-1967 slots) and the contract whose code actually runs
+   OperatorPermissionsRegistry    0x6B2FbfeD328FF5F20C0BE7D3C3437613aFFE8D3a
+      decides which operator may act for which account
+      code 176 bytes; proxy -> implementation 0x543D7C170b20E7f9571Ad3538201Ab9B297A63D3 (via EIP-1967 implementation slot)
+   MarginBank                     0x478769E1177C0773c43A593DCCc4Ad15F15F1394
+      holds all users' perp collateral
+      code 176 bytes; proxy -> implementation 0xf0b09D6869E6b016124f19FaB86Bd0F73B9c3B10 (via EIP-1967 implementation slot)
+   PerpPool (ETH)                 0xd6cb1dd58580b84d76068ac21594219ce03aeddf
+      the ETH/USDso market (a beacon proxy)
+      code 321 bytes; proxy -> implementation 0x772e9B720C8140FaAA4D561a15269ED60E01521D (via EIP-1967 beacon slot -> beacon 0xb787F7d2F87d32c1505C110c4457eD36A3f6b002)
+   PerpPoolFactory                0xE631fAEE547baeE07353E290f0562ea67d856560
+      creates perp pools
+      code 176 bytes; proxy -> implementation 0x9703c46Aba162b1c4B8FC8562E85A93698A1C139 (via EIP-1967 implementation slot)
+   PerpPool beacon                0xb787F7d2F87d32c1505C110c4457eD36A3f6b002
+      supplies the implementation for every pool that points at it; code 760 bytes
+
+2. Owner of each contract, and what kind of account that owner is
+   OperatorPermissionsRegistry    owner() = 0xd58596620Ee6951B2958a931949e4ff7ce6222be
+      owner is: EOA (no code; 2233 txs sent by this key)
+      pendingOwner() = 0x0 (no ownership transfer pending)
+   MarginBank                     owner() = 0xd58596620Ee6951B2958a931949e4ff7ce6222be
+      owner is: EOA (no code; 2233 txs sent by this key)
+      pendingOwner() = 0x0 (no ownership transfer pending)
+   PerpPool (ETH)                 owner() = 0xd58596620Ee6951B2958a931949e4ff7ce6222be
+      owner is: EOA (no code; 2233 txs sent by this key)
+      pendingOwner() = 0x0 (no ownership transfer pending)
+   PerpPoolFactory                owner() = 0xd58596620Ee6951B2958a931949e4ff7ce6222be
+      owner is: EOA (no code; 2233 txs sent by this key)
+      pendingOwner() = 0x0 (no ownership transfer pending)
+   PerpPool beacon                owner() = 0xd58596620Ee6951B2958a931949e4ff7ce6222be
+      owner is: EOA (no code; 2233 txs sent by this key)
+      pendingOwner() = (no getter)
+
+3. Admin / upgrade surface present in each implementation's bytecode (selector presence only; access control is tested in section 4)
+   selector                           registry    bank        pool(ETH)   factory     beacon     
+   owner()                            yes         yes         yes         yes         yes        
+   pendingOwner()                     yes         yes         yes         yes         -          
+   transferOwnership(address)         yes         yes         yes         yes         yes        
+   acceptOwnership()                  yes         yes         yes         yes         -          
+   renounceOwnership()                yes         yes         yes         yes         yes        
+   upgradeToAndCall(address,bytes)    yes         yes         -           yes         -          
+   proxiableUUID()                    yes         yes         -           yes         -          
+   upgradeTo(address)                 -           -           -           yes         yes        
+   (the code inspected is each proxy's implementation; for the beacon and, if it is not a proxy, the factory, the contract's own code)
+
+4. Upgrade authority, by SIMULATION
+   Each call is an eth_call at the pinned block that upgrades a contract to ITS OWN CURRENT implementation, i.e. a no-op even if it were executed.
+   Nothing is sent or changed. It shows which `from` address the contract treats as authorized to upgrade it.
+   OperatorPermissionsRegistry    upgradeToAndCall(current implementation)
+      from the owner 0xd58596…6222be: SUCCESS (no revert)
+      from a neutral address:        REVERT OwnableUnauthorizedAccount
+   MarginBank                     upgradeToAndCall(current implementation)
+      from the owner 0xd58596…6222be: SUCCESS (no revert)
+      from a neutral address:        REVERT OwnableUnauthorizedAccount
+   PerpPool (ETH)                 no standard upgrade function found; not simulated (a beacon-proxy pool is upgraded through its beacon, below)
+   PerpPoolFactory                upgradeToAndCall(current implementation)
+      from the owner 0xd58596…6222be: SUCCESS (no revert)
+      from a neutral address:        REVERT OwnableUnauthorizedAccount
+   PerpPool beacon                upgradeTo(current implementation)
+      from the owner 0xd58596…6222be: SUCCESS (no revert)
+      from a neutral address:        REVERT OwnableUnauthorizedAccount
+
+5. MarginBank system config, and whether the same address is the fee recipient
+   feeRecipient     = 0xd58596620Ee6951B2958a931949e4ff7ce6222be   same as MarginBank owner: true
+   liquidationEngine = 0xA66d3C24Ad4a389d863846905D8173e1017e9F4D
+   insuranceFund     = 0x50826894D47C6D4f3BeA38BFDC7Dc5c5be171b80
+   perpPoolFactory   = 0xE631fAEE547baeE07353E290f0562ea67d856560   (matches the factory above: true)
+   Extra system contracts (not in the original list), owners:
+      liquidationEngine  owner() = 0xd58596620Ee6951B2958a931949e4ff7ce6222be   -> EOA
+      insuranceFund      owner() = 0xd58596620Ee6951B2958a931949e4ff7ce6222be   -> EOA
+
+6. Conclusion
+================================================================================================
+Observed: ONE externally-owned account, 0xd58596620Ee6951B2958a931949e4ff7ce6222be,
+is the owner of all 5 listed contracts (OperatorPermissionsRegistry, MarginBank, PerpPool (ETH), PerpPoolFactory, PerpPool beacon), and of the liquidation engine and insurance fund as well.
+It is a plain EOA (no code), not a multisig or timelock; the same address is also the bank's fee recipient (read from getSystemConfig).
+In the section 4 simulations this owner is accepted as upgrade authority on every contract tested, and a neutral address is not.
+Ownership transfer is two-step (pendingOwner + acceptOwnership present) on: registry, bank, pool(ETH), factory; not on: beacon.
+
+Context: a single-EOA admin is normal and expected on a testnet, and this is not a vulnerability here. The note is for mainnet readiness: if this key, or
+this ownership layout, were carried to mainnet unchanged, one key compromise or mistake could upgrade the registry (and with it change which operators are
+authorized), the collateral-holding bank, the factory and every beacon-proxied pool. Suggested before mainnet: a multisig (optionally behind a timelock) as
+owner of all of them, and documenting who holds upgrade authority.

@@ -1,0 +1,69 @@
+feedback-repro-01: stale order id => IncorrectSender names an unrelated address
+======================================================================================
+1. Pinned block: 28564579 (set via PIN_BLOCK)   (every call below uses blockNumber=28564579; chain 50383, pool 0xd6cb1dd58580b84d76068ac21594219ce03aeddf)
+   All calls are eth_call simulations from impersonated `from` addresses. No key, no signature, no transaction.
+
+2. Confirm each id has no active order (pool.getOrder(id) at the pinned block):
+   A (our cancelled order)        id 10348623425351065400181  ->  no active order  (getOrder reverts IncorrectOrder)
+   B (another cancelled order)    id 10348623425351065426342  ->  no active order  (getOrder reverts IncorrectOrder)
+   C (another cancelled order)    id 10422410401645903632798  ->  no active order  (getOrder reverts IncorrectOrder)
+
+   Historical owner of A, from the chain:
+   place tx 0x737a3b06b869e1c2ca682b91696995e2ed80be019c72fbf401900fdef5a3ba05
+     placeOrderFor owner argument = 0x9b29D1086BCa079CC07b859B406b84E5b8c9e7B1   (pool logged order A in this tx: true)
+   cancel tx 0xe6aed37efb676d715922872bf599f557ce9e92582094ae3979acc98ffdb9b448
+     cancelled A for the same owner; on-chain, order A has been gone since that tx.
+
+3. Calls on each gone id (all from a neutral address unless noted):
+
+   --- A (our cancelled order): id 10348623425351065400181
+   cancelOrder(id)                                                    -> IncorrectSender(sender=0x111111…111111, expected=0x6C2986…761ce4)
+   reduceOrder(id, 1)                                                 -> IncorrectSender(sender=0x111111…111111, expected=0x6C2986…761ce4)
+   reduceOrders([{id, 1}])                                            -> IncorrectSender(sender=0x111111…111111, expected=0x6C2986…761ce4)
+   cancelOrderFor(SAFE, id)   [from NEUTRAL: not authorized]          -> OnlyApprovedContracts()
+   cancelOrderFor(SAFE, id)   [from OPERATOR: authorized for SAFE]    -> IncorrectSender(sender=0x9b29D1…c9e7B1, expected=0x6C2986…761ce4)
+   amendOrder(id -> new order)                                        -> AmendOldOrderGone(oldOrderId=10348623425351065400181)
+
+   --- B (another cancelled order): id 10348623425351065426342
+   cancelOrder(id)                                                    -> IncorrectSender(sender=0x111111…111111, expected=0x6C2986…761ce4)
+   reduceOrder(id, 1)                                                 -> IncorrectSender(sender=0x111111…111111, expected=0x6C2986…761ce4)
+   reduceOrders([{id, 1}])                                            -> IncorrectSender(sender=0x111111…111111, expected=0x6C2986…761ce4)
+   cancelOrderFor(SAFE, id)   [from NEUTRAL: not authorized]          -> OnlyApprovedContracts()
+   cancelOrderFor(SAFE, id)   [from OPERATOR: authorized for SAFE]    -> IncorrectSender(sender=0x9b29D1…c9e7B1, expected=0x6C2986…761ce4)
+   amendOrder(id -> new order)                                        -> AmendOldOrderGone(oldOrderId=10348623425351065426342)
+
+   --- C (another cancelled order): id 10422410401645903632798
+   cancelOrder(id)                                                    -> IncorrectSender(sender=0x111111…111111, expected=0xD3Ecd9…aDE619)
+   reduceOrder(id, 1)                                                 -> IncorrectSender(sender=0x111111…111111, expected=0xD3Ecd9…aDE619)
+   reduceOrders([{id, 1}])                                            -> IncorrectSender(sender=0x111111…111111, expected=0xD3Ecd9…aDE619)
+   cancelOrderFor(SAFE, id)   [from NEUTRAL: not authorized]          -> OnlyApprovedContracts()
+   cancelOrderFor(SAFE, id)   [from OPERATOR: authorized for SAFE]    -> IncorrectSender(sender=0x9b29D1…c9e7B1, expected=0xD3Ecd9…aDE619)
+   amendOrder(id -> new order)                                        -> AmendOldOrderGone(oldOrderId=10422410401645903632798)
+
+4. Who does IncorrectSender name as the order's owner?
+   A (our cancelled order): names 0x6C2986A550DC4212b49a1710d8466553E3761ce4
+      historical owner of this id is 0x9b29D1086BCa079CC07b859B406b84E5b8c9e7B1 (see the place tx above); named address equals it: false
+      pool.getOrder(id) reverts (no active order exists for ANY owner), so 0x6C2986…761ce4 cannot be the owner of an order with this id.
+      => UNRELATED third-party address reported as the order's owner.
+   B (another cancelled order): names 0x6C2986A550DC4212b49a1710d8466553E3761ce4
+      pool.getOrder(id) reverts (no active order exists for ANY owner), so 0x6C2986…761ce4 cannot be the owner of an order with this id.
+      => UNRELATED third-party address reported as the order's owner.
+   C (another cancelled order): names 0xD3Ecd94b11Dfe7515d5614b0458Bf22175aDE619
+      pool.getOrder(id) reverts (no active order exists for ANY owner), so 0xD3Ecd9…aDE619 cannot be the owner of an order with this id.
+      => UNRELATED third-party address reported as the order's owner.
+
+5. State change check:
+   Every call above is an eth_call: nothing is broadcast, no state changes, and these are reverts, so no events are committed.
+   debug_traceCall of cancelOrder(10348623425351065400181) also available on this RPC: reverted=true, events emitted=0.
+
+6. Summary
+======================================================================================
+Expected: calling cancelOrder / reduceOrder / reduceOrders on an order id that does not exist should revert with an
+order-not-found style error (as amendOrder does: AmendOldOrderGone, and as the pool's own getOrder view does: IncorrectOrder).
+Actual: those three functions revert with IncorrectSender(sender, expected) where `expected` is an address that has nothing to do
+with the id (3 of 3 gone ids named an unrelated third-party address in this run; the named address changes
+over time and per id, and is the zero address for ids that never existed). For order A the true historical owner is 0x9b29D1…c9e7B1,
+yet the error names a different address. The same happens through cancelOrderFor for an authorized operator. This reads as an authorization
+failure and exposes an unrelated address (the owner check appears to run against whichever order now occupies the id's slot before the
+id itself is validated; the later IncorrectOrder check prevents any state change, so this is a clarity/error-semantics issue, not an
+exploit). Suggested fix: validate the id first and revert with a dedicated order-not-found error.
